@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'This template is used to create security groups for defined VPC.'
+Metadata:
+  License: Apache-2.0
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Inbound IP configuration"
+        Parameters: 
+          - SshIPRange
+      - 
+        Label: 
+          default: "VPC configuration"
+        Parameters: 
+          - VPCId          
+    ParameterLabels: 
+      SshIPRange:
+        default: "IP Range"
+      VPCId: 
+        default: "VPC ID"
+
+Parameters:
+  SshIPRange:
+    Description: The IP range that can be used to SSH EC2 Instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be a valid CIDR IP range of form x.x.x.x/x
+
+  VPCId:
+    Description: VPC to create the security group into
+    Type: AWS::EC2::VPC::Id
+
+Resources:
+# Ingress rule for EC2 SSH connections 
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH Access
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        CidrIp: !Ref SshIPRange
+        FromPort: 22
+        ToPort: 22        
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        FromPort: 80
+        ToPort: 80        
+Outputs:
+  StackSSHSecurityGroup:
+    Description: The SSH Security Group for Instance
+    Value: !Ref InstanceSecurityGroup
+    Export:
+      Name: SSHSecurityGroup

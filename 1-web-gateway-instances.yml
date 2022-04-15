@@ -1,0 +1,210 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'This template is used to create web gateway instance for BI cognos application in AWS cloud.  
+  **WARNING** This template creates an Amazon EC2 instances. 
+  You will be billed for the AWS resources used if you create a stack from this template.'
+
+Metadata:
+  License: Apache-2.0
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - 
+        Label: 
+          default: "Amazon EC2 Configuration"
+        Parameters: 
+          - ChooseAvailabilityZone
+          - WebGatewayInstanceType
+          - SsmAmiKey
+          - ChooseEc2KeyPairs
+          - InstanceVolumeSize
+
+    ParameterLabels: 
+      ChooseAvailabilityZone: 
+        default: "Availability Zone"
+      WebGatewayInstanceType: 
+        default: "Web Gateway Instance Type"
+      SsmAmiKey: 
+        default: "Instance AMI Id"
+      ChooseEc2KeyPairs: 
+        default: "Instance Key Pair"
+      InstanceVolumeSize:
+        default: "Root Volume Size in GiB"
+
+Parameters:
+
+  ChooseAvailabilityZone:
+    Description: Availability Zone for EC2 Instance
+    Type: AWS::EC2::AvailabilityZone::Name
+    ConstraintDescription: Must be a valid Availability Zone
+
+  SsmAmiKey:
+    Description: This parameter fetches AMI ID value using SSM Public parameters Key.
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+    # AllowedValues: [
+    #   "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-arm64-gp2",
+    #   "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs",
+    #   "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2",
+    #   "/aws/service/ami-amazon-linux-latest/amzn2-ami-minimal-hvm-arm64-ebs",
+    #   "/aws/service/ami-amazon-linux-latest/amzn2-ami-minimal-hvm-x86_64-ebs"]
+    ConstraintDescription: Must be a valid AMI ID based. Note, These ID's differ from each region.
+
+  ChooseEc2KeyPairs:
+    Description: Name of the EC2 pair to enable SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Must be the name of existing EC2 KeyPair.
+
+  # Instance list for web gateway servers
+  WebGatewayInstanceType:
+    Description: Instance type for cognos web gatweay servers (recommended instance is t3.2xlarge).
+    Type: String
+    Default: t2.micro # For web gateway, the recommended instance is t3.2xlarge
+    AllowedValues: [t2.nano, t2.micro, t2.small, t2.medium, t2.large, t2.xlarge, t2.2xlarge,
+      t3.nano, t3.micro, t3.small, t3.medium, t3.large, t3.xlarge, t3.2xlarge,
+      m5.large, m5.xlarge, m5.2xlarge, m5.4xlarge, m5.8xlarge, m5.12xlarge, m5.16xlarge, m5.24xlarge,
+      m4.large, m4.xlarge, m4.2xlarge, m4.4xlarge, m4.10xlarge, m4.16xlarge]
+    ConstraintDescription: Must be a valid Instance Type  
+
+  # Launch Template Version (web gateway)
+  # WebGatewayLaunchTemplateVersionNumber:
+  #   Description: Define Launch Template Version in numbers (do not include any string characters).
+  #   Type: String
+  #   Default: 1
+
+  InstanceVolumeSize:
+    Description: Device Volume in digit (note, volume size should not be less than 8).
+    Type: Number
+    MinValue: 8
+    MaxValue: 30
+
+
+# ************* COGNOS WEB-GATEWAY INSTANCES **********
+
+Resources:
+  WebGatewayEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: !Ref 'ChooseAvailabilityZone'
+      ImageId: !Ref 'SsmAmiKey'
+      InstanceType: !Ref 'WebGatewayInstanceType'
+      KeyName: !Ref 'ChooseEc2KeyPairs'
+      SecurityGroupIds:
+        - !ImportValue SSHSecurityGroup
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebGatewayInstanceLaunchTemplate
+        Version: !GetAtt WebGatewayInstanceLaunchTemplate.LatestVersionNumber
+      BlockDeviceMappings: #Root device configuration
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            VolumeSize: !Ref InstanceVolumeSize
+            DeleteOnTermination: 'true' # set the value to false to prevent from deletion
+            Encrypted: 'true'
+
+# Below commented code is to add new additional block device
+  # MountPointOne:
+  #   Type: AWS::EC2::VolumeAttachment
+  #   Properties:
+  #     InstanceId:
+  #       !Ref WebGatewayEC2Instance
+  #     VolumeId:
+  #       !Ref VolumeOne
+  #     Device: /dev/xvdh
+  # VolumeOne:
+  #   Type: AWS::EC2::Volume
+  #   Properties:
+  #     Size: 1
+  #     AvailabilityZone:
+  #       !GetAtt WebGatewayEC2Instance.AvailabilityZone
+
+      Tags:
+        - Key: Application
+          Value: Cognos Analytics
+        - Key: Environment
+          Value: Production
+        - Key: Description
+          Value: This instance allows web communication to transfer information from one web server to other.
+
+  # Launch Template for Instances
+  WebGatewayInstanceLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${AWS::StackName}-launch-template-for-auto-scaling'
+      LaunchTemplateData:
+        ImageId: !Ref SsmAmiKey
+        InstanceType: !Ref WebGatewayInstanceType
+        KeyName: !Ref ChooseEc2KeyPairs
+
+  # Auto Scaling Group for Instances
+  WebGatewayInstanceASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: '0'
+      MaxSize: '1'
+      # DesiredCapacity: '1'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebGatewayInstanceLaunchTemplate
+        Version: !GetAtt WebGatewayInstanceLaunchTemplate.LatestVersionNumber
+      AvailabilityZones:
+        - !Ref ChooseAvailabilityZone
+
+# Scaling up policy
+  WebGatewayASGScalingUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref WebGatewayInstanceASG
+      Cooldown: '60'
+      ScalingAdjustment: 1
+
+# Scaling down policy
+  WebGatewayASGScalingDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref WebGatewayInstanceASG
+      Cooldown: '60'
+      ScalingAdjustment: -1
+
+# CPU High Alarm
+  WebGatewayCPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale out if CPU > 90% for 2 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2      
+      Statistic: Average
+      Period: '60'
+      EvaluationPeriods: '2'
+      Threshold: '90'
+      AlarmActions:
+      - !Ref WebGatewayASGScalingUpPolicy      
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value: !Ref WebGatewayInstanceASG
+      ComparisonOperator: GreaterThanThreshold      
+
+# CPU Low Alarm
+  WebGatewayCPUAlarmLow:  
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale-down if CPU < 70% for 10 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2      
+      Statistic: Average     
+      Period: '300'
+      EvaluationPeriods: '2'
+      Threshold: '70'
+      AlarmActions:
+      - !Ref WebGatewayASGScalingDownPolicy      
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value: !Ref WebGatewayInstanceASG
+      ComparisonOperator: LessThanThreshold      
+
+# Outputs:
+#   InstanceLaunchTemplate:
+#     Description: Instance Launch template ID
+#     Value: !Ref WebGatewayInstanceLaunchTemplate
+#     Export:
+#       Name: AsgLaunchTemplateID
